@@ -1,8 +1,6 @@
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from mediapipe import solutions
-from mediapipe.framework.formats import landmark_pb2
 import numpy as np
 import cv2
 import time
@@ -31,35 +29,36 @@ def get_result(result: HandLandmarkerResult, output_image: mp.Image, timestamp_m
   detection_result = result
 
 
-def draw_landmarks_on_image(rgb_image, detection_result):
-
-  hand_landmarks_list = detection_result.hand_landmarks
-  annotated_image = np.copy(rgb_image)
+#def draw_landmarks_on_image(rgb_image, detection_result):
+#
+ # hand_landmarks_list = detection_result.hand_landmarks
+  #annotated_image = np.copy(rgb_image)
 
   # Loop through the detected hands to visualize.
-  for idx in range(len(hand_landmarks_list)):
-    hand_landmarks = hand_landmarks_list[idx]
+  #for idx in range(len(hand_landmarks_list)):
+   # hand_landmarks = hand_landmarks_list[idx]
   
 
     # Draw the hand landmarks.
-    hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
-    hand_landmarks_proto.landmark.extend([
-      landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
-    ])
-    solutions.drawing_utils.draw_landmarks(
-      annotated_image,
-      hand_landmarks_proto,
-      solutions.hands.HAND_CONNECTIONS,
-      solutions.drawing_styles.get_default_hand_landmarks_style(),
-      solutions.drawing_styles.get_default_hand_connections_style())
+    #hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+    #hand_landmarks_proto.landmark.extend([
+     # landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
+    #])
+    # solutions.drawing_utils.draw_landmarks(
+    #   annotated_image,
+    #   hand_landmarks_proto,
+    #   solutions.hands.HAND_CONNECTIONS,
+    #   solutions.drawing_styles.get_default_hand_landmarks_style(),
+    #   solutions.drawing_styles.get_default_hand_connections_style())
 
-  return annotated_image
+  #return annotated_image
 
 #--------------------------------------------------------------------------------------------------------------------------
 
 # Configuración de Pygame
 pygame.init()
-screen = pygame.display.set_mode((640, 480))
+WIDTH, HEIGHT = 960, 720
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
 
 # Configuración de Pymunk
@@ -67,10 +66,10 @@ space = pymunk.Space()
 space.gravity = (0, 0)  # Sin gravedad, para mover libremente el objeto
 
 # Crear un círculo en Pymunk que se moverá con la mano
-body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
-body.position = (320, 240)  # Posición inicial en el centro
-circle = pymunk.Circle(body, 20)
-space.add(body, circle)
+ball_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
+ball_body.position = (320, 400)  # zona baja
+ball_shape = pymunk.Circle(ball_body, 18)
+space.add(ball_body, ball_shape)
 
 options = HandLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=model_path),
@@ -96,7 +95,7 @@ with HandLandmarker.create_from_options(options) as landmarker:
     frame_timestamp_ms = int(time.time() * 1000)
     landmarker.detect_async(mp_image, frame_timestamp_ms)
     if detection_result is not None:
-      image = draw_landmarks_on_image(mp_image.numpy_view(), detection_result)
+      # image = draw_landmarks_on_image(mp_image.numpy_view(), detection_result)
       
       #image = draw_bb_with_letter(image,detection_result,'A')
       if len(detection_result.hand_landmarks) > 0:
@@ -105,19 +104,27 @@ with HandLandmarker.create_from_options(options) as landmarker:
         index_finger_tip = landmarks[8]
                 
         # Convertir coordenadas normalizadas a la pantalla de pygame
-        screen_x = int(index_finger_tip.x * 640)
-        screen_y = int(index_finger_tip.y * 480)
+        screen_x = int(index_finger_tip.x * WIDTH)
+        screen_y = int(index_finger_tip.y * HEIGHT)
+
 
         print(index_finger_tip.x,index_finger_tip.y)
 
-        # Actualizar posición del objeto en Pymunk
-        body.position = screen_x, screen_y
+        # Limitar zona de control
+        min_x, max_x = 50, WIDTH * 0.4
+        min_y, max_y = HEIGHT * 0.6, HEIGHT - 50
+
+
+        clamped_x = max(min_x, min(screen_x, max_x))
+        clamped_y = max(min_y, min(screen_y, max_y))
+
+        ball_body.position = clamped_x, clamped_y
         
     # Avanzar la simulación de Pymunk
     space.step(1 / 60.0)
     # Renderizar el objeto en Pygame
     screen.fill((255, 255, 255))
-    pygame.draw.circle(screen, (0, 0, 255), (int(body.position.x), int(body.position.y)), int(circle.radius))
+    pygame.draw.circle(screen, (255, 165, 0), (int(ball_body.position.x), int(ball_body.position.y)), int(ball_shape.radius))
     
     pygame.display.flip()
     clock.tick(60)
