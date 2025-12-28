@@ -23,7 +23,17 @@ detection_result = None
 HAND_OFFSET_X = -80   # Mueve la pelota a la izquierda de la posición del dedo
 HAND_OFFSET_Y = 100   # Mueve la pelota hacia abajo de la posición del dedo
 
+# Estela de puntos de dirección de la pelota
 trajectory = []
+
+# Sistema de carga de lanzamiento
+charging = False
+charge_start_time = 0.0
+
+MIN_FORCE = 1500
+MAX_FORCE = 3000
+MAX_CHARGE_TIME = 1.5  # segundos
+
 
 # Coordenadas para la flecha de dirección
 arrow_dx = 0.0
@@ -82,13 +92,12 @@ clock = pygame.time.Clock()
 
 # Configuración de Pymunk
 space = pymunk.Space()
-space.gravity = (0, 10000) # Añadimos gravedad para el lanzamiento
+space.gravity = (0, 3000) # Añadimos gravedad para el lanzamiento
 
-# Suelo
-floor = pymunk.Segment(space.static_body, (0, HEIGHT - 30), (WIDTH, HEIGHT - 30), 5)
-floor.elasticity = 0.6
-floor.friction = 0.8
-space.add(floor)
+# Techo
+ceiling = pymunk.Segment(space.static_body, (0, 30), (WIDTH, 30), 5)
+ceiling.elasticity = 0.6
+space.add(ceiling)
 
 # Pared izquierda
 left_wall = pymunk.Segment(space.static_body, (30, 0), (30, HEIGHT), 5)
@@ -149,6 +158,7 @@ with HandLandmarker.create_from_options(options) as landmarker:
         pinch = pinch_distance < 0.04
 
         just_pinch = pinch and not prev_pinch
+        released_pinch = not pinch and prev_pinch
         prev_pinch = pinch
 
         # Vector de dirección
@@ -196,16 +206,29 @@ with HandLandmarker.create_from_options(options) as landmarker:
 
 
         if just_pinch and not ball_launched:
-          ball_launched = True
+          charging = True
+          charge_start_time = time.time()
 
           # Congelar dirección
           frozen_arrow_dx = arrow_dx
           frozen_arrow_dy = arrow_dy
 
+        if released_pinch and charging and not ball_launched:
+          charging = False
+          ball_launched = True
+
+          # Tiempo de carga
+          charge_time = time.time() - charge_start_time
+          charge_time = min(charge_time, MAX_CHARGE_TIME)
+
+          # Interpolación de fuerza
+          force_ratio = charge_time / MAX_CHARGE_TIME
+          FORCE = MIN_FORCE + force_ratio * (MAX_FORCE - MIN_FORCE)
+
           # Eliminar cuerpo cinemático
           space.remove(ball_body, ball_shape)
 
-          # Crear cuerpo dinámico CON masa
+          # Crear cuerpo dinámico
           mass = 1
           radius = 18
           moment = pymunk.moment_for_circle(mass, 0, radius)
@@ -216,23 +239,42 @@ with HandLandmarker.create_from_options(options) as landmarker:
           ball_shape = pymunk.Circle(ball_body, radius)
           space.add(ball_body, ball_shape)
 
-          # Normalizar vector de lanzamiento
+          # Normalizar dirección congelada
           length = (frozen_arrow_dx**2 + frozen_arrow_dy**2) ** 0.5
           if length > 0:
-            launch_x = frozen_arrow_dx / length
-            launch_y = frozen_arrow_dy / length
+              launch_x = frozen_arrow_dx / length
+              launch_y = frozen_arrow_dy / length
           else:
-            launch_x, launch_y = 0, -1
+              launch_x, launch_y = 0, -1
 
-
-          FORCE = 20
-          impulse_x = frozen_arrow_dx * FORCE
-          impulse_y = frozen_arrow_dy * FORCE
+          impulse_x = launch_x * FORCE
+          impulse_y = launch_y * FORCE
 
           ball_body.apply_impulse_at_local_point((impulse_x, impulse_y))
 
-    # Avanzar la simulación de Pymunk
-    space.step(1 / 60.0)
+
+    # Si la pelota sale por abajo o por los lados → reset del tiro
+    if ball_launched:
+      out_of_bounds = (
+          ball_body.position.y > HEIGHT + 50 or
+          ball_body.position.x < -50 or
+          ball_body.position.x > WIDTH + 50
+      )
+
+      if out_of_bounds:
+        # Eliminar bola actual
+        space.remove(ball_body, ball_shape)
+
+        # Reset de estado
+        ball_launched = False
+        trajectory.clear()
+
+        # Crear nueva bola controlada por la mano
+        ball_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
+        ball_body.position = (320, 400)  # luego la moverá la mano
+        ball_shape = pymunk.Circle(ball_body, 18)
+        space.add(ball_body, ball_shape)
+    
 
     if ball_launched:
       if (
@@ -244,6 +286,9 @@ with HandLandmarker.create_from_options(options) as landmarker:
     # Limitar tamaño del rastro
     if len(trajectory) > 200:
       trajectory.pop(0)
+
+    # Avanzar la simulación de Pymunk
+    space.step(1 / 60.0)
 
     # Renderizar el objeto en Pygame
     screen.fill((255, 255, 255))
@@ -265,13 +310,17 @@ with HandLandmarker.create_from_options(options) as landmarker:
 
       pygame.draw.circle(screen, (255, 165, 0), (ball_x, ball_y), int(ball_shape.radius))
 
-      arrow_end_x = int(ball_x + arrow_dx)
-      arrow_end_y = int(ball_y + arrow_dy)
+      if charging:
+        arrow_end_x = int(ball_x + frozen_arrow_dx)
+        arrow_end_y = int(ball_y + frozen_arrow_dy)
+      else:
+        arrow_end_x = int(ball_x + arrow_dx)
+        arrow_end_y = int(ball_y + arrow_dy)
 
       pygame.draw.line(screen, (0, 0, 0), (ball_x, ball_y), (arrow_end_x, arrow_end_y), 4)
 
-    # Dibujar suelo
-    pygame.draw.line(screen, (100, 100, 100), (0, HEIGHT - 30), (WIDTH, HEIGHT - 30), 5)
+    # Dibujar techo
+    pygame.draw.line( screen, (100, 100, 100), (0, 30), (WIDTH, 30), 5)
 
     # Dibujar paredes
     pygame.draw.line(screen, (100, 100, 100), (30, 0), (30, HEIGHT), 5)
